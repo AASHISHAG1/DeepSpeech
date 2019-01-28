@@ -3,57 +3,16 @@
 from __future__ import absolute_import, division, print_function
 
 import argparse
-import numpy as np
-import wave
 import csv
+import numpy as np
 import sys
+import wave
 
-from six.moves import zip, range
-from attrdict import AttrDict
-from multiprocessing import JoinableQueue, Pool, Process, Queue, cpu_count
 from deepspeech import Model
+from multiprocessing import JoinableQueue, Process, Queue, cpu_count
+from six.moves import zip, range
+from util.text import wer_cer_batch, levenshtein
 
-# Fake modules to allow imports to succeed
-# so we can re-use modules below without the un-needed deps
-from types import ModuleType
-def register_fake_module(name):
-    m = ModuleType(name)
-    m.__file__ = m.__name__ + ".py"
-    sys.modules[m.__name__] = m
-
-register_fake_module('ds_ctcdecoder')
-register_fake_module('ds_ctcdecoder.ctc_beam_search_decoder_batch')
-register_fake_module('ds_ctcdecoder.Scorer')
-register_fake_module('pandas')
-register_fake_module('tables')
-register_fake_module('scipy')
-register_fake_module('scipy.io')
-register_fake_module('scipy.io.wavfile')
-register_fake_module('python_speech_features')
-register_fake_module('python_speech_features.mfcc')
-register_fake_module('tensorflow')
-
-class tf_flags():
-    FLAGS = {}
-    def __init__(self):
-        pass
-
-class tf_app():
-    flags = tf_flags()
-    def __init__(self):
-        pass
-
-sys.modules['tensorflow'].app = tf_app
-register_fake_module('tensorflow.python')
-register_fake_module('tensorflow.python.client')
-register_fake_module('tensorflow.python.client.device_lib')
-register_fake_module('xdg')
-register_fake_module('xdg.BaseDirectory')
-## Now we can import code
-
-from util.preprocess import pmap
-from evaluate import process_decode_result, calculate_report
-from util.text import wer, levenshtein
 
 r'''
 This module should e self-contained:
@@ -62,7 +21,7 @@ This module should e self-contained:
     - bazel build [...] --copt=-DUSE_TFLITE [...] //native_client:libdeepspeech.so
   - make -C native_client/python/ TFDIR=... bindings
   - setup a virtualenv
-  - pip install numpy attrdict
+  - pip install numpy
   - pip install native_client/python/dist/deepspeech*.whl
 
 Then run with a TF Lite model, alphabet, LM/trie and a CSV test file
@@ -119,7 +78,6 @@ def main():
 
     ground_truths = []
     predictions = []
-    losses = []
 
     with open(args.csv, 'r') as csvfile:
         csvreader = csv.DictReader(csvfile)
@@ -129,18 +87,11 @@ def main():
 
     while (not work_done.empty()):
         msg = work_done.get()
-        losses.extend([0.0])
         ground_truths.extend([ msg['ground_truth'] ])
         predictions.extend([ msg['prediction'] ])
 
-    distances = [levenshtein(a, b) for a, b in zip(ground_truths, predictions)]
-
-    wer, samples = calculate_report(ground_truths, predictions, distances, losses)
-    mean_edit_distance = np.mean(distances)
-    mean_loss = np.mean(losses)
-
-    print('Test - WER: %f, CER: %f, loss: %f' %
-          (wer, mean_edit_distance, mean_loss))
+    wer, cer = wer_cer_batch(ground_truths, predictions)
+    print('Test - WER: %f, CER: %f' % (wer, cer))
 
 if __name__ == '__main__':
     main()
